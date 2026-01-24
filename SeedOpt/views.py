@@ -11,13 +11,16 @@ from PIL import Image
 import os
 import cupy as cp
 import random
+import time
 
 # Create your views here.
 
 seedPos = []
+planFile = "PL001.dcm"
+doseFile = "DO001.dcm"
 def getSeedPos(file):
     seedPos = []
-    file = finders.find(os.path.join("PL001.dcm"))
+    file = finders.find(os.path.join("Files", planFile))
     plan = pyd.dcmread(file)
     for app in enumerate(plan.ApplicationSetupSequence):
         #print(f"Air Kerma   : {app.ApplicationSetupType}")
@@ -37,7 +40,7 @@ def getSeedPos(file):
 
 def showPlan(request):
     seedPos = []
-    file = finders.find(os.path.join("PL001.dcm"))
+    file = finders.find(os.path.join("Files", planFile))
     plan = pyd.dcmread(file)
     print(f"Patient Name       : {plan.PatientName}")
     print(f"Patient ID         : {plan.PatientID}")
@@ -49,6 +52,7 @@ def showPlan(request):
         
                       # e.g. I-125 OncoSeed, Pd-103, etc.
         print(f"Source Isotope          : {src.SourceIsotopeName}")
+        kermaRate = src.ReferenceAirKermaRate
 
     
     seedPos  = getSeedPos(file)
@@ -63,12 +67,12 @@ def showPlan(request):
 
     spacing = 1
     spacing_z = -5
-    dfile = finders.find(os.path.join("DO001.dcm"))
+    dfile = finders.find(os.path.join("Files", doseFile))
     ds = pyd.dcmread(dfile)
     
     dose_dicom = ds.pixel_array.astype(cp.float32)
     dy, dx = float(ds.PixelSpacing[0]), float(ds.PixelSpacing[1])  # dy = row (y-dir), dx = column (x-dir)
-
+    
 # Starting position (corner of first voxel)
     x0, y0, z0 = float(ds.ImagePositionPatient[0]), float(ds.ImagePositionPatient[1]), float(ds.ImagePositionPatient[2])
     z_positions = cp.array(ds.GridFrameOffsetVector, dtype=cp.float32)
@@ -81,8 +85,14 @@ def showPlan(request):
     #points = cp.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
    
     print(f"z grid array: {gz}")
-    dose = calcDose(seedPos, gx, gy, gz, output_dose_rate=False)
-    dfile = finders.find(os.path.join("DO001.dcm"))
+    start_time = time.time()
+    dose = calcDose(seedPos, gx, gy, gz, kermaRate)
+
+    end_time = time.time()
+
+    print(f"Calculation took: {end_time - start_time:.4f} seconds")
+
+    #dfile = finders.find(os.path.join("Files/DO001.dcm"))
     plan_dose = getDose(dfile)
     getDoseErr(dose, plan_dose)
 
@@ -90,7 +100,7 @@ def showPlan(request):
     #calcDoseCPU(file, dfile)
     return render(request, 'home.html', {})
 
-def calcDose(seed_pos, grid_x, grid_y, grid_z, output_dose_rate=True):
+def calcDose(seed_pos, grid_x, grid_y, grid_z, Kerma):
     Lambda = 0.965
     L = 0.45  # cm
     gL_r = cp.array([0.1, 0.15, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0,
@@ -104,8 +114,8 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, output_dose_rate=True):
     
     X, Y, Z = cp.meshgrid(grid_x, grid_y, grid_z, indexing='xy')
     points = cp.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
-    print(f"points shape: {points.shape}")
-    print(f"X grid size:  {len(X)}")
+    #print(f"points shape: {points.shape}")
+    #print(f"X grid size:  {len(X)}")
 
 
     if isinstance(seed_pos, list):
@@ -121,7 +131,7 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, output_dose_rate=True):
     points_exp = points[None, :, :]  # (1, Npoints, 3)
     pos_exp = pos[:, None, :]        # (Nseeds, 1, 3)
    
-    print(f"number of point: {Npoints}")
+    #print(f"number of point: {Npoints}")
     
     #print(f"pos exp : {pos_exp}")
     #print(f"dose points:  {points_exp}")
@@ -163,7 +173,7 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, output_dose_rate=True):
     # 1D anisotropy φ_an(r): simple fit, broadcasts
     
 
-    dose = cp.sum(0.427 * Lambda * 1/r**2 * gL * aniso * 2057, axis=0)
+    dose = cp.sum(Kerma * Lambda * 1/r**2 * gL * aniso * 2057, axis=0)
     dose = dose/100
     #print(f"dose : {dose}")
     #print(f"dose points : {dose.shape}")
@@ -185,18 +195,6 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, output_dose_rate=True):
 
     return dose3d.get()
 
-def showUS(request):
-
-    file2 = finders.find(os.path.join("Images","US001.dcm"))
-    ds =  pyd.dcmread(file2)
-    pix_data = ds.pixel_array
-    total_frames = 1
-    is_multiframe = False
-    pix_data.dtype 
-    total_frames = 1
-    is_multiframe = False
-    print(f"data type:  {pix_data.dtype}") 
-    img = Image.fromarray(pix_data)
 
 def getDose(file):
     ds = pyd.dcmread(file)
@@ -320,12 +318,10 @@ def calcDoseCPU(Pfile, Dfile):
     
     #for z in z_grid:
 
+class Plan:
 
-
-
-
-         
-
-
-
-
+    def __init__(self):
+        self.planName
+        self.SeedPositions
+        
+    

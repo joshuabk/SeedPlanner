@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Prostate Ultrasound Slice Viewer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #e8ecef;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .info {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 1.2em;
+            color: #555;
+        }
+        .viewer-wrapper {
+            max-width: 1200px;
+            margin: 30px auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            padding: 30px;
+            text-align: center;
+        }
+        #main-image {
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            background: #000;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        .controls {
+            margin: 30px 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .nav-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            font-size: 32px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .nav-btn:hover { background: #0056b3; }
+        .nav-btn:disabled { background: #ccc; cursor: not-allowed; }
+        #play-btn {
+            background: #28a745;
+            width: 80px;
+            height: 60px;
+            border-radius: 30px;
+            font-size: 24px;
+        }
+        #play-btn:hover { background: #218838; }
+        #play-btn.pause { background: #dc3545; }
+        #play-btn.pause:hover { background: #c82333; }
+        input[type="range"] {
+            width: 400px;
+            max-width: 80%;
+        }
+        .counter {
+            font-size: 1.5em;
+            font-weight: bold;
+            min-width: 200px;
+        }
+        .label {
+            margin-top: 15px;
+            font-size: 1.2em;
+            color: #444;
+        }
+        .instructions {
+            text-align: center;
+            font-style: italic;
+            color: #666;
+            margin: 20px 0;
+        }
+        .error { color: #d32f2f; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Prostate Ultrasound Slice Viewer</h1>
+
+    {% if error %}
+        <p class="error">{{ error }}</p>
+    {% else %}
+        <div class="info">
+            <p>{{ num_images }} DICOM file{{ num_images|pluralize }} • {{num_images }} total frame{{ num_images|pluralize }}</p>
+        </div>
+
+        <div class="viewer-wrapper">
+            <img id="main-image" src="data:image/png;base64,{{ US_images.0.0 }}" alt="Current Frame">
+
+            <div class="label" id="current-label">{{ US_images.1.1 }}</div>
+
+            <div class="controls">
+                <button id="prev-btn" class="nav-btn">‹</button>
+
+                <button id="play-btn">▶</button>
+
+                <input type="range" id="slider" min="0" max="{{ num_images|add:"-1" }}" value="0">
+
+                <button id="next-btn" class="nav-btn">›</button>
+
+                <div class="counter" id="counter">1 / {{ num_images }}</div>
+            </div>
+
+            <div class="instructions">
+                Use ← → arrow keys, mouse wheel, slider, or buttons to navigate slices • Click Play for cine loop
+            </div>
+        </div>
+    {% endif %}
+
+    <script>
+        const images = [{% for img_base64, label in US_images %}{src: "data:image/png;base64,{{ img_base64 }}", label: "{{ label }}"} {% if not forloop.last %}, {% endif %}{% endfor %}];
+        const total = images.length;
+        let current = 0;
+        let playing = false;
+        let intervalId = null;
+
+        const mainImg = document.getElementById('main-image');
+        const label = document.getElementById('current-label');
+        const counter = document.getElementById('counter');
+        const slider = document.getElementById('slider');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+        const playBtn = document.getElementById('play-btn');
+
+        function updateView() {
+            mainImg.src = images[current].src;
+            label.textContent = images[current].label;
+            counter.textContent = `${current + 1} / ${total}`;
+            slider.value = current;
+            prevBtn.disabled = current === 0;
+            nextBtn.disabled = current === total - 1;
+        }
+
+        function goPrev() {
+            if (current > 0) { current--; updateView(); }
+        }
+
+        function goNext() {
+            if (current < total - 1) { current++; updateView(); }
+            // Auto-loop for cine feel
+            if (playing && current === total - 1) current = 0;
+        }
+
+        function togglePlay() {
+            playing = !playing;
+            playBtn.textContent = playing ? '❚❚' : '▶';
+            playBtn.classList.toggle('pause', playing);
+
+            if (playing) {
+                intervalId = setInterval(goNext, 200);  // 5 FPS – adjust as needed (e.g., 100ms = 10 FPS)
+            } else {
+                clearInterval(intervalId);
+            }
+        }
+
+        // Event listeners
+        prevBtn.onclick = goPrev;
+        nextBtn.onclick = goNext;
+        playBtn.onclick = togglePlay;
+        slider.oninput = () => { current = parseInt(slider.value); updateView(); };
+
+        // Keyboard
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') goPrev();
+            if (e.key === 'ArrowRight') goNext();
+            if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+        });
+
+        // Mouse wheel on image
+        mainImg.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (e.deltaY < 0) goPrev();
+            else goNext();
+        });
+
+        // Initial update
+        updateView();
+    </script>
+</body>
+</html>

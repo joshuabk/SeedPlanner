@@ -31,11 +31,11 @@
             text-align: center;
         }
         #main-image {
-            max-width: 100%;
-            max-height: 70vh;
+            max-width: 150%;
+            max-height: 100vh;
             object-fit: contain;
             background: #000;
-            border-radius: 10px;
+            border-radius: 8px;
             box-shadow: 0 4px 16px rgba(0,0,0,0.4);
         }
         .controls {
@@ -103,7 +103,7 @@
         </div>
 
         <div class="viewer-wrapper">
-            <img id="main-image" src="data:image/png;base64,{{ US_images.0.0 }}" alt="Current Frame">
+            <img id="main-image" src="data:image/png;base64,{{ US_images.0.0 }}" alt="Current Frame" data-csrf="{{ csrf_token }}">
 
             <div class="label" id="current-label">{{ US_images.1.1 }}</div>
 
@@ -140,6 +140,18 @@
         const nextBtn = document.getElementById('next-btn');
         const playBtn = document.getElementById('play-btn');
 
+        // Zoom & Pan state
+        let scale = 1.0;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+
+        function updateImageTransform() {
+            mainImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        }
+
         function updateView() {
             mainImg.src = images[current].src;
             label.textContent = images[current].label;
@@ -147,6 +159,10 @@
             slider.value = current;
             prevBtn.disabled = current === 0;
             nextBtn.disabled = current === total - 1;
+            scale = 1.0;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
         }
 
         function goPrev() {
@@ -186,10 +202,160 @@
 
         // Mouse wheel on image
         mainImg.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            if (e.deltaY < 0) goPrev();
-            else goNext();
-        });
+        e.preventDefault();
+
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;  // zoom out/in
+        const newScale = Math.max(0.5, Math.min(8.0, scale * delta));
+
+        // Zoom toward mouse cursor
+        const rect = mainImg.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const scaleChange = newScale / scale;
+        translateX = mouseX - (mouseX - translateX) * scaleChange;
+        translateY = mouseY - (mouseY - translateY) * scaleChange;
+
+        scale = newScale;
+        updateImageTransform();
+    });
+    // Drag to pan
+   /* mainImg.addEventListener('mousedown', (e) => {
+        if (e.button === 0) {  // left click only
+            isDragging = true;
+            dragStartX = e.clientX - translateX;
+            dragStartY = e.clientY - translateY;
+            mainImg.style.cursor = 'grabbing';
+        }
+    });*/
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+       translateX = e.clientX - dragStartX;
+       translateY = e.clientY - dragStartY;
+       updateImageTransform();
+   });
+
+
+   /* document.addEventListener('mouseup', () => {
+        isDragging = false;
+        mainImg.style.cursor = 'default';
+    });*/
+
+   /* mainImg.addEventListener('dblclick', () => {
+        scale = 1.0;
+        translateX = 0;
+        translateY = 0;
+        updateImageTransform();
+    });*/
+
+    <!-- In your Django template -->
+
+
+// Get the image element
+const image = document.getElementById('main-image');
+
+// Listen for clicks
+document.addEventListener('keydown', (e) => {
+        if (e.key === 'o' || e.key === 'O') {
+            isSettingOrigin = true;
+            image.style.cursor = 'crosshair';
+        }
+    });
+
+document.addEventListener('keyup', (e) => {
+        if (e.key === 'o' || e.key === 'O') {
+            isSettingOrigin = false;
+            image.style.cursor = 'default';
+        }
+    });
+
+
+image.addEventListener('click', function(e) {
+    // Get click position relative to the image (not the page)
+    if (!isSettingOrigin){
+    const rect = image.getBoundingClientRect();
+    
+    // Coordinates in displayed pixels
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // If image is scaled (CSS or natural size differs), convert to original image pixels
+    const scaleX = image.naturalWidth / rect.width;
+    const scaleY = image.naturalHeight / rect.height;
+    
+    const originalX = Math.round(x * scaleX);
+    const originalY = Math.round(y * scaleY);
+
+    // Optional: log to console for debugging
+    console.log(`Clicked at: display(${x.toFixed(1)}, ${y.toFixed(1)}) → original(${originalX}, ${originalY})`);
+    
+    // Send to Django backend
+    sendClickToBackend(originalX, originalY);
+    }    
+    else{
+        console.log('Origin locked:', origin);
+
+            // Send to server (Django) if needed
+            fetch('setOrigin/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'  // make sure you have {% csrf_token %} in template
+                },
+                body: JSON.stringify({
+                    slice_num: current,
+                    origin_x: origin.x,
+                    origin_y: origin.y,
+                    
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Origin saved:', data);
+                // Optionally update UI or redraw seeds relative to new origin
+            });
+   
+    }
+}); 
+
+
+
+function sendClickToBackend(x, y) {
+    const csrfToken = document.querySelector('[data-csrf]').dataset.csrf;
+
+    fetch('handleSeed/', {  // ← your Django URL
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            x: x,
+            y: y,
+            slice_index: current,   // ← add your current slice number
+            image_width: image.naturalWidth,
+            image_height: image.naturalHeight
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log("Seed added successfully");
+            // Optional: refresh overlay image
+            if (data.new_overlay) {
+                image.src = data.new_overlay;
+            }
+        } else {
+            alert("Error: " + (data.error || "Unknown error"));
+        }
+    })
+    .catch(error => {
+        console.error("Request failed:", error);
+        alert("Failed to communicate with server");
+    });
+}
+
 
         // Initial update
         updateView();

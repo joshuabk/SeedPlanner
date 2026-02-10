@@ -37,6 +37,13 @@ def getSeedPos(file):
                     #print(f"control point          :{pos}")
                     seedPos.append(pos)
     return seedPos
+def getKerma(plan_File):
+    file = finders.find(os.path.join("Files", planFile))
+    plan_ds = pyd.dcmread(file)
+    for src in plan_ds.SourceSequence:
+        kermaRate = src.ReferenceAirKermaRate
+    return kermaRate
+
 
 def showPlan(request):
     seedPos = []
@@ -52,8 +59,8 @@ def showPlan(request):
         
                       # e.g. I-125 OncoSeed, Pd-103, etc.
         print(f"Source Isotope          : {src.SourceIsotopeName}")
-        kermaRate = src.ReferenceAirKermaRate
-
+    kermaRate = getKerma(planFile)
+    
     
     seedPos  = getSeedPos(file)
     #print(f"seed positions : {seedPos}")
@@ -67,22 +74,8 @@ def showPlan(request):
 
     spacing = 1
     spacing_z = -5
-    dfile = finders.find(os.path.join("Files", doseFile))
-    ds = pyd.dcmread(dfile)
     
-    dose_dicom = ds.pixel_array.astype(cp.float32)
-    dy, dx = float(ds.PixelSpacing[0]), float(ds.PixelSpacing[1])  # dy = row (y-dir), dx = column (x-dir)
-    
-# Starting position (corner of first voxel)
-    x0, y0, z0 = float(ds.ImagePositionPatient[0]), float(ds.ImagePositionPatient[1]), float(ds.ImagePositionPatient[2])
-    z_positions = cp.array(ds.GridFrameOffsetVector, dtype=cp.float32)
-
-    nx, ny, nz = int(ds.Columns), int(ds.Rows), len(ds.GridFrameOffsetVector)
-    gx = cp.arange(ds.Columns) + x0
-    gy = cp.arange(ds.Rows) + y0    # Posterior → Anterior
-    gz = z_positions
-    #X, Y, Z = cp.meshgrid(grid_x, grid_y, grid_z, indexing='xy')
-    #points = cp.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
+    gx, gy, gz = getDoseGrid(doseFile)
    
     print(f"z grid array: {gz}")
     start_time = time.time()
@@ -93,12 +86,30 @@ def showPlan(request):
     print(f"Calculation took: {end_time - start_time:.4f} seconds")
 
     #dfile = finders.find(os.path.join("Files/DO001.dcm"))
-    plan_dose = getDose(dfile)
+    plan_dose = getDose(doseFile)
     getDoseErr(dose, plan_dose)
 
     #print(f"final calced dose: {dose}")
     #calcDoseCPU(file, dfile)
     return render(request, 'home.html', {})
+
+def getDoseGrid(dFile):
+    dfile = finders.find(os.path.join("Files", dFile))
+    ds = pyd.dcmread(dfile)
+    
+    dose_dicom = ds.pixel_array.astype(cp.float32)
+    dy, dx = float(ds.PixelSpacing[0]), float(ds.PixelSpacing[1])  # dy = row (y-dir), dx = column (x-dir)
+    
+    # Starting position (corner of first voxel)
+    x0, y0, z0 = float(ds.ImagePositionPatient[0]), float(ds.ImagePositionPatient[1]), float(ds.ImagePositionPatient[2])
+    z_positions = cp.array(ds.GridFrameOffsetVector, dtype=cp.float32)
+
+    nx, ny, nz = int(ds.Columns), int(ds.Rows), len(ds.GridFrameOffsetVector)
+    gx = cp.arange(ds.Columns) + x0
+    gy = cp.arange(ds.Rows) + y0    # Posterior → Anterior
+    gz = z_positions
+    return gx, gy, gz
+
 
 def calcDose(seed_pos, grid_x, grid_y, grid_z, Kerma):
     Lambda = 0.965
@@ -130,8 +141,6 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, Kerma):
 
     points_exp = points[None, :, :]  # (1, Npoints, 3)
     pos_exp = pos[:, None, :]        # (Nseeds, 1, 3)
-   
-    #print(f"number of point: {Npoints}")
     
     #print(f"pos exp : {pos_exp}")
     #print(f"dose points:  {points_exp}")
@@ -197,7 +206,8 @@ def calcDose(seed_pos, grid_x, grid_y, grid_z, Kerma):
 
 
 def getDose(file):
-    ds = pyd.dcmread(file)
+    dfile = finders.find(file)
+    ds = pyd.dcmread(dfile)
     dose_grid  = ds.pixel_array
     #print(dose_grid)
     print(dose_grid.shape)       # Usually (Frames, Rows, Columns) → e.g. (120, 256, 256)
